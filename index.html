@@ -330,19 +330,57 @@ async function staffLogin(){
   }
 }
 
+/* スマホ（特にiPhone）や、ホーム画面から開いた状態では
+   小窓（ポップアップ）が塞がれてログインできない。
+   その場合は「別画面に移動して戻ってくる方式」を使う。 */
+function needsRedirect(){
+  const ua = navigator.userAgent || '';
+  const standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  return standalone || navigator.standalone === true
+      || /iPhone|iPad|iPod|Android/i.test(ua);
+}
+
 async function googleLogin(){
   clearSay();
   const store = normStore($('storeInput').value || getStore());
   if (!store) { say('warn','先に店舗番号を入力してください。6けたの数字です。'); return; }
   setStore(store);
+
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+
   try {
-    await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    if (needsRedirect()) {
+      say('ok','Googleのログイン画面に移動します…');
+      await auth.signInWithRedirect(provider);
+      return;                       // 画面が切り替わるのでここで終わり
+    }
+    await auth.signInWithPopup(provider);
   } catch (e) {
-    if (String(e.code||'').indexOf('popup')>=0)
-      say('warn','ログイン画面が開けませんでした。\nホーム画面のアイコンではなく、Safariでこのページを開いてお試しください。');
-    else
-      say('err','ログインできませんでした。\n\n（' + (e.code||e.message) + '）');
+    const code = String((e && e.code) || '');
+    if (code.indexOf('popup') >= 0) {
+      // 小窓が塞がれた → 別画面方式でやり直す
+      try {
+        say('ok','別の方法でログインします…');
+        await auth.signInWithRedirect(provider);
+        return;
+      } catch (e2) { showLoginError(e2); }
+    } else {
+      showLoginError(e);
+    }
   }
+}
+
+function showLoginError(e){
+  const code = String((e && e.code) || '');
+  if (code.indexOf('unauthorized-domain') >= 0)
+    say('err','このアドレスからはログインできない設定になっています。\n店長にお伝えください。\n\n（' + code + '）');
+  else if (code.indexOf('network') >= 0)
+    say('err','通信できませんでした。\n電波の良い場所でもう一度お試しください。\n\n（' + code + '）');
+  else if (code.indexOf('cancelled') >= 0 || code.indexOf('closed-by-user') >= 0)
+    say('warn','ログインが途中で終わりました。もう一度お試しください。');
+  else
+    say('err','ログインできませんでした。\nこの内容を店長にお伝えください。\n\n（' + (code || (e && e.message) || '不明') + '）');
 }
 
 async function logout(){
@@ -455,6 +493,13 @@ $('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') staffLogin(
 
 if (ready) {
   $('storeInput').value = getStore();
+
+  // 別画面方式でログインして戻ってきたときの結果を受け取る。
+  // 失敗していたら黙って戻すのではなく、必ず画面に出す。
+  auth.getRedirectResult().catch(e => {
+    if (e && e.code) showLoginError(e);
+  });
+
   auth.onAuthStateChanged(user => {
     if (user) loadMe(user);
     else { $('loginView').classList.remove('hide'); $('homeView').classList.add('hide'); }
