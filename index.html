@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="経営ポータル">
+<meta name="theme-color" content="#1f6feb">
+<link rel="manifest" href="manifest.json">
+<title>経営ポータル</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --ink:#1a1d21; --sub:#6b7280; --line:#e3e6ea;
+    --blue:#1f6feb; --green:#12855b; --red:#c62828; --amber:#b26a00;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:17px; line-height:1.65; padding-bottom:40px;
+  }
+  .wrap{max-width:560px; margin:0 auto; padding:16px;}
+
+  /* 上部の状態バー */
+  header{
+    position:sticky; top:0; z-index:20; background:var(--blue); color:#fff;
+    padding:14px 16px; display:flex; align-items:center; gap:10px;
+  }
+  header .title{font-weight:700; font-size:18px; flex:1;}
+  .dot{font-size:13px; opacity:.95; white-space:nowrap;}
+
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:18px; margin-bottom:14px;
+  }
+  h2{font-size:17px; margin:0 0 12px;}
+  p.lead{color:var(--sub); font-size:15px; margin:0 0 16px;}
+  label{display:block; font-size:14px; color:var(--sub); margin:14px 0 6px;}
+
+  input{
+    width:100%; font-size:19px; padding:14px; border:2px solid var(--line);
+    border-radius:11px; background:#fff; color:var(--ink);
+  }
+  input:focus{outline:none; border-color:var(--blue);}
+  input.pin{letter-spacing:.5em; text-align:center; font-size:24px;}
+
+  .btn{
+    display:block; width:100%; font-size:18px; font-weight:700; padding:16px;
+    border:none; border-radius:12px; background:var(--blue); color:#fff;
+    margin-top:14px; cursor:pointer;
+  }
+  .btn.sub{background:#fff; color:var(--ink); border:2px solid var(--line);}
+  .btn.quiet{background:none; color:var(--sub); font-weight:400; font-size:15px; padding:10px;}
+  .btn:disabled{opacity:.5;}
+
+  /* 失敗を必ず画面に出す（見えない失敗を作らない） */
+  #alert{display:none; margin:0 0 14px; padding:14px 16px; border-radius:12px;
+         font-size:15px; white-space:pre-wrap; border:2px solid;}
+  #alert.err{display:block; background:#fdecec; border-color:var(--red); color:var(--red);}
+  #alert.warn{display:block; background:#fff6e5; border-color:var(--amber); color:var(--amber);}
+  #alert.ok{display:block; background:#e9f7f0; border-color:var(--green); color:var(--green);}
+
+  .kv{display:flex; justify-content:space-between; gap:12px; padding:11px 0;
+      border-bottom:1px solid var(--line); font-size:15px;}
+  .kv:last-child{border-bottom:none;}
+  .kv .k{color:var(--sub); flex:0 0 auto;}
+  .kv .v{text-align:right; word-break:break-all; font-weight:600;}
+  .v.ok{color:var(--green);} .v.ng{color:var(--red);} .v.na{color:var(--sub); font-weight:400;}
+
+  .hide{display:none !important;}
+  .note{font-size:13px; color:var(--sub); margin-top:10px; line-height:1.6;}
+  code{background:#eef1f5; padding:2px 7px; border-radius:6px; font-size:13px; word-break:break-all;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">経営ポータル</div>
+  <div class="dot" id="netDot">接続を確認中</div>
+</header>
+
+<div class="wrap">
+
+  <div id="alert"></div>
+
+  <!-- ============ ログイン前 ============ -->
+  <div id="loginView">
+    <div class="card">
+      <h2>お店を選ぶ</h2>
+      <p class="lead">はじめに一度だけ入力します。次からは省略されます。</p>
+      <label for="storeInput">店舗番号</label>
+      <input id="storeInput" inputmode="numeric" placeholder="711-403175" autocomplete="off">
+      <div class="note">これは「どのお店の画面を開くか」の指定です。鍵ではありません。</div>
+    </div>
+
+    <div class="card">
+      <h2>スタッフの方</h2>
+      <label for="codeInput">あなたの番号</label>
+      <input id="codeInput" inputmode="numeric" placeholder="011" autocomplete="off">
+      <label for="pinInput">暗証番号（6けた）</label>
+      <input id="pinInput" class="pin" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off">
+      <button class="btn" id="staffLogin">はじめる</button>
+      <div class="note">番号がわからないときは店長にお尋ねください。</div>
+    </div>
+
+    <div class="card">
+      <h2>店長・オーナーの方</h2>
+      <p class="lead">給与や評価を扱うため、Googleのアカウントでログインします。</p>
+      <button class="btn sub" id="googleLogin">Googleでログイン</button>
+    </div>
+  </div>
+
+  <!-- ============ ログイン後 ============ -->
+  <div id="homeView" class="hide">
+    <div class="card">
+      <h2>ログインの確認</h2>
+      <p class="lead">土台が正しく動いているかを確かめる画面です。</p>
+      <div class="kv"><span class="k">お店</span><span class="v" id="vStore">—</span></div>
+      <div class="kv"><span class="k">ログイン方法</span><span class="v" id="vProvider">—</span></div>
+      <div class="kv"><span class="k">このお店の登録</span><span class="v" id="vMember">—</span></div>
+      <div class="kv"><span class="k">あなたの番号</span><span class="v" id="vCode">—</span></div>
+      <div class="kv"><span class="k">できること</span><span class="v" id="vRole">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>読み取りの確認</h2>
+      <p class="lead">権限どおりに読めるもの・読めないものを実際に試します。</p>
+      <div class="kv"><span class="k">業務の一覧</span><span class="v na" id="tTasks">—</span></div>
+      <div class="kv"><span class="k">スタッフ名簿</span><span class="v na" id="tStaff">—</span></div>
+      <div class="kv"><span class="k">給与（店長のみ）</span><span class="v na" id="tWage">—</span></div>
+      <button class="btn sub" id="runCheck">もう一度ためす</button>
+    </div>
+
+    <div class="card" id="uidCard">
+      <h2>登録用の番号</h2>
+      <p class="lead">まだこのお店に登録されていません。下の文字列を伝えてください。</p>
+      <div style="margin:10px 0"><code id="vUid">—</code></div>
+      <button class="btn sub" id="copyUid">この文字列をコピー</button>
+    </div>
+
+    <button class="btn quiet" id="logout">ログアウト</button>
+  </div>
+
+</div>
+
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
+<script>
+/* =========================================================
+   経営ポータル
+   - 素のHTML1枚 + Firebase compat版（CDNではなく同梱）
+   - 失敗は必ず画面に出す。黙って失敗させない
+   ========================================================= */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDPWrWPc9a_guzUOW35nlVJq-286Ahmsa8",
+  authDomain: "keiei-portal-app.firebaseapp.com",
+  projectId: "keiei-portal-app",
+  storageBucket: "keiei-portal-app.firebasestorage.app",
+  messagingSenderId: "970519900782",
+  appId: "1:970519900782:web:cc76884f31b36bae272c7f"
+};
+
+/* 内部用の宛先。.invalid は規格上ぜったいに実在しないドメイン。
+   スタッフがこの文字列を目にすることはない。 */
+const MAIL_DOMAIN_SUFFIX = '.invalid';
+
+const LS_STORE = 'kp_store';
+
+let db = null, auth = null, ready = false;
+let me = { uid:null, provider:null, member:null, role:'none', code:null };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ---------- 画面へのお知らせ（失敗を隠さない） ---------- */
+function say(kind, msg){
+  const el = $('alert');
+  el.className = kind;
+  el.textContent = msg;
+  if (kind) window.scrollTo({top:0, behavior:'smooth'});
+}
+function clearSay(){ $('alert').className=''; $('alert').textContent=''; }
+
+function setNet(state){
+  const el = $('netDot');
+  if (state==='online')  el.textContent = '● つながっています';
+  else if (state==='offline') el.textContent = '● オフライン';
+  else el.textContent = '接続を確認中';
+}
+
+/* ---------- 起動 ---------- */
+try {
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db   = firebase.firestore();
+  db.enablePersistence({synchronizeTabs:true}).catch(()=>{});   // 電波が悪くても直前の内容を出す
+  ready = true;
+} catch (e) {
+  say('err', 'アプリを起動できませんでした。\n通信を確認して、開き直してください。\n\n（' + e.message + '）');
+}
+
+const getStore = () => (localStorage.getItem(LS_STORE) || '').trim();
+const setStore = v => localStorage.setItem(LS_STORE, (v||'').trim());
+
+/* 番号の表記ゆれを吸収する。011 でも E011 でも 11 でも同じ人を指す */
+function normCode(raw){
+  let v = String(raw||'').trim().toUpperCase().replace(/[^0-9A-Z]/g,'');
+  if (v.startsWith('E')) v = v.slice(1);
+  if (!/^\d{1,3}$/.test(v)) return null;
+  return 'E' + v.padStart(3,'0');
+}
+const mailFor = (code, store) => code.toLowerCase() + '@' + store.toLowerCase() + MAIL_DOMAIN_SUFFIX;
+
+/* ---------- ログイン ---------- */
+async function staffLogin(){
+  clearSay();
+  const store = ($('storeInput').value || getStore()).trim();
+  const code  = normCode($('codeInput').value);
+  const pin   = ($('pinInput').value || '').trim();
+
+  if (!store) { say('warn','店舗番号を入力してください。'); return; }
+  if (!code)  { say('warn','あなたの番号を入力してください。（例：011）'); return; }
+  if (pin.length < 6) { say('warn','暗証番号は6けたです。'); return; }
+
+  setStore(store);
+  $('staffLogin').disabled = true;
+  try {
+    await auth.signInWithEmailAndPassword(mailFor(code, store), pin);
+  } catch (e) {
+    const m = (e && e.code) || '';
+    if (m.indexOf('wrong-password')>=0 || m.indexOf('user-not-found')>=0 || m.indexOf('invalid-credential')>=0)
+      say('err','番号か暗証番号が違うようです。\nもう一度お試しください。わからないときは店長にお尋ねください。');
+    else if (m.indexOf('network')>=0)
+      say('err','通信できませんでした。電波の良い場所でもう一度お試しください。');
+    else if (m.indexOf('too-many-requests')>=0)
+      say('err','試行が続いたため、一時的に受け付けを止めています。\nしばらく待ってからお試しください。');
+    else
+      say('err','ログインできませんでした。\n\n（' + m + '）');
+  } finally {
+    $('staffLogin').disabled = false;
+  }
+}
+
+async function googleLogin(){
+  clearSay();
+  const store = ($('storeInput').value || getStore()).trim();
+  if (!store) { say('warn','先に店舗番号を入力してください。'); return; }
+  setStore(store);
+  try {
+    await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch (e) {
+    if (String(e.code||'').indexOf('popup')>=0)
+      say('warn','ログイン画面が開けませんでした。\nホーム画面のアイコンではなく、Safariでこのページを開いてお試しください。');
+    else
+      say('err','ログインできませんでした。\n\n（' + (e.code||e.message) + '）');
+  }
+}
+
+async function logout(){
+  clearSay();
+  try { await auth.signOut(); } catch(e){}
+  location.reload();
+}
+
+/* ---------- ログイン後の状態を調べる ---------- */
+async function loadMe(user){
+  const store = getStore();
+  me.uid = user.uid;
+  me.provider = (user.providerData && user.providerData[0] && user.providerData[0].providerId) || 'unknown';
+  me.member = null; me.role = 'none'; me.code = null;
+
+  try {
+    const snap = await db.collection('stores').doc(store).collection('members').doc(user.uid).get();
+    if (snap.exists) {
+      me.member = snap.data();
+      me.role = me.member.role || 'none';
+      me.code = me.member.staffCode || null;
+      if (me.member.disabled === true) me.role = 'disabled';
+    }
+  } catch (e) {
+    // 読めない＝登録されていない、が正常な場合もある
+  }
+  render();
+}
+
+function roleLabel(r){
+  if (r==='manager') return '店長（すべて）';
+  if (r==='leader')  return 'リーダー（割当・申し送り）';
+  if (r==='crew')    return 'スタッフ（自分の記録）';
+  if (r==='kiosk')   return '共用端末';
+  if (r==='disabled')return '停止中';
+  return '未登録';
+}
+
+function render(){
+  $('loginView').classList.add('hide');
+  $('homeView').classList.remove('hide');
+
+  $('vStore').textContent = getStore() || '—';
+  $('vProvider').textContent = me.provider==='google.com' ? 'Google（店長用）'
+                             : me.provider==='password'   ? '番号と暗証番号'
+                             : me.provider;
+
+  const reg = !!me.member && me.role!=='none';
+  const mv = $('vMember');
+  mv.textContent = me.role==='disabled' ? '停止されています'
+                 : reg ? '登録されています' : 'まだ登録されていません';
+  mv.className = 'v ' + (me.role==='disabled' ? 'ng' : reg ? 'ok' : 'ng');
+
+  $('vCode').textContent = me.code || '—';
+  $('vRole').textContent = roleLabel(me.role);
+
+  $('vUid').textContent = me.uid || '—';
+  $('uidCard').classList.toggle('hide', reg);
+
+  if (me.role==='disabled') {
+    say('err','このアカウントは停止されています。\n店長にお問い合わせください。');
+  } else if (!reg) {
+    say('warn','ログインはできましたが、このお店にはまだ登録されていません。\n下の「登録用の番号」を店長に伝えてください。');
+  } else {
+    clearSay();
+  }
+  runCheck();
+}
+
+/* ---------- 権限どおりに読めるかを実際に試す ---------- */
+async function runCheck(){
+  const store = getStore();
+  const set = (id, ok, txt) => {
+    const el = $(id); el.textContent = txt; el.className = 'v ' + (ok===null?'na':ok?'ok':'ng');
+  };
+  set('tTasks', null, '確認中…'); set('tStaff', null, '確認中…'); set('tWage', null, '確認中…');
+
+  try { await db.collection('stores').doc(store).collection('tasks').limit(1).get();
+        set('tTasks', true, '読めます'); }
+  catch(e){ set('tTasks', false, '読めません'); }
+
+  try { await db.collection('stores').doc(store).collection('staff').limit(1).get();
+        set('tStaff', true, '読めます'); }
+  catch(e){ set('tStaff', false, '読めません'); }
+
+  try {
+    const q = await db.collection('stores').doc(store).collection('staff').limit(1).get();
+    if (q.empty) { set('tWage', null, '確認できません（名簿が空）'); }
+    else {
+      await q.docs[0].ref.collection('private').doc('employment').get();
+      set('tWage', me.role==='manager', me.role==='manager' ? '読めます（店長なので正常）' : '★読めてしまいました');
+    }
+  } catch(e){
+    set('tWage', me.role!=='manager', me.role==='manager' ? '★店長なのに読めません' : '読めません（正常）');
+  }
+}
+
+/* ---------- 画面の配線 ---------- */
+$('staffLogin').onclick = staffLogin;
+$('googleLogin').onclick = googleLogin;
+$('logout').onclick = logout;
+$('runCheck').onclick = runCheck;
+$('copyUid').onclick = () => {
+  navigator.clipboard.writeText(me.uid||'').then(
+    ()=> say('ok','コピーしました。店長にお伝えください。'),
+    ()=> say('warn','コピーできませんでした。画面の文字を長押しして選んでください。')
+  );
+};
+$('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') staffLogin(); });
+
+if (ready) {
+  $('storeInput').value = getStore();
+  auth.onAuthStateChanged(user => {
+    if (user) loadMe(user);
+    else { $('loginView').classList.remove('hide'); $('homeView').classList.add('hide'); }
+  });
+  // 通信状態を画面に出す
+  const ping = () => setNet(navigator.onLine ? 'online' : 'offline');
+  window.addEventListener('online', ping); window.addEventListener('offline', ping); ping();
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
