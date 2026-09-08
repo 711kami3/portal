@@ -134,6 +134,59 @@
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--navy);
     margin:12px 0 0;
   }
+  /* ---------- 一覧 ---------- */
+  .row{
+    display:flex; align-items:center; gap:12px; width:100%;
+    padding:14px 4px; border-bottom:1px solid #eef1f4;
+    background:none; border-left:none; border-right:none; border-top:none;
+    text-align:left; font:inherit; color:inherit; cursor:pointer;
+  }
+  .row:last-child{border-bottom:none;}
+  .row:active{background:#f6f8fa;}
+  .row .num{
+    flex:0 0 auto; min-width:46px; font-size:12.5px; font-weight:700;
+    color:var(--sub); font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  .row .nm{flex:1; font-size:16.5px; font-weight:600;}
+  .row .tag{
+    flex:0 0 auto; font-size:11.5px; font-weight:700; padding:3px 9px;
+    border-radius:999px; letter-spacing:.03em;
+  }
+  .tag.emp{background:#e8f0fb; color:#1c4f96;}
+  .tag.own{background:#efe9fb; color:#4b2e91;}
+  .tag.left{background:#f1f3f5; color:#79818c;}
+  .row .arw{flex:0 0 auto; color:#c3cad3; font-size:18px;}
+  .row.dim .nm{color:#98a1ad; font-weight:500;}
+
+  .foldbtn{
+    width:100%; background:none; border:none; padding:14px 4px 4px;
+    color:var(--sub); font-size:14px; text-align:left; cursor:pointer; font:inherit;
+  }
+
+  /* ---------- 下から出るシート ---------- */
+  .sheet-bg{
+    position:fixed; inset:0; background:rgba(12,18,26,.42); z-index:60;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .sheet{
+    background:#fff; width:100%; max-width:520px;
+    border-radius:20px 20px 0 0; padding:24px 20px calc(28px + env(safe-area-inset-bottom,0px));
+    max-height:88vh; overflow-y:auto;
+  }
+  .sheet h3{margin:0 0 4px; font-size:19px;}
+  .sheet .who{color:var(--sub); font-size:13.5px; margin:0 0 18px;
+               font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .chips{display:flex; gap:9px; flex-wrap:wrap;}
+  .chip{
+    flex:1 1 auto; min-width:88px; text-align:center;
+    padding:13px 10px; border-radius:11px; border:1.5px solid var(--line);
+    background:#fbfcfd; font-size:15px; font-weight:600; color:var(--sub); cursor:pointer;
+  }
+  .chip.on{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .chip.warn.on{background:#8a5a00; border-color:#8a5a00;}
+  .sheet .acts{display:flex; gap:11px; margin-top:24px;}
+  .sheet .acts .btn{margin-top:0;}
+
   .divider{
     display:flex; align-items:center; gap:12px;
     color:#a6aeb9; font-size:12.5px; margin:22px 2px 18px; letter-spacing:.08em;
@@ -209,7 +262,26 @@
       <button class="btn sub" id="copyUid">この文字列をコピー</button>
     </div>
 
+    <div class="card" id="menuCard">
+      <h2>できること</h2>
+      <button class="btn sub" id="toStaff">スタッフ名簿を開く</button>
+    </div>
+
     <button class="btn quiet" id="logout">ログアウト</button>
+  </div>
+
+  <!-- ============ スタッフ名簿 ============ -->
+  <div id="staffView" class="hide">
+    <div class="card">
+      <h2>スタッフ名簿</h2>
+      <p class="lead">名前をタップすると変更できます。<br>
+        番号は一度決めたら変わりません。退職しても他の人に使い回しません。</p>
+      <div id="staffActive"></div>
+      <button class="foldbtn" id="foldLeft"></button>
+      <div id="staffLeft" class="hide"></div>
+      <button class="btn sub" id="addStaff" style="margin-top:18px">＋ 新しい人を追加</button>
+    </div>
+    <button class="btn quiet" id="backHome">← 戻る</button>
   </div>
 
 </div>
@@ -439,6 +511,7 @@ function render(){
 
   $('vUid').textContent = me.uid || '—';
   $('uidCard').classList.toggle('hide', reg);
+  $('menuCard').classList.toggle('hide', me.role !== 'manager');
 
   if (me.role==='disabled') {
     say('err','このアカウントは停止されています。\n店長にお問い合わせください。');
@@ -489,6 +562,216 @@ $('copyUid').onclick = () => {
     ()=> say('warn','コピーできませんでした。画面の文字を長押しして選んでください。')
   );
 };
+/* =========================================================
+   スタッフ名簿の管理（店長のみ）
+   ★本体（staff）と一覧のコピー（views/staffList）は
+     必ず「同じ書き込み」で更新する。片方だけ直すとズレる。
+   ========================================================= */
+
+const EMP = { monthly:'社員', hourly:'アルバイト', owner:'経営' };
+const ST  = { active:'在籍', leave:'休職', left:'退職' };
+
+let ROSTER = [];        // 画面が扱う名簿（本体から読む）
+let editing = null;     // いま編集している人
+
+const storeRef = () => db.collection('stores').doc(getStore());
+
+async function openStaff(){
+  if (me.role !== 'manager') { say('warn','この画面は店長のみです。'); return; }
+  clearSay();
+  $('homeView').classList.add('hide');
+  $('staffView').classList.remove('hide');
+  $('staffActive').innerHTML = '<p class="lead">読み込んでいます…</p>';
+  $('staffLeft').innerHTML = '';
+  try {
+    const snap = await storeRef().collection('staff').get();
+    ROSTER = snap.docs.map(d => Object.assign({code:d.id}, d.data()));
+    ROSTER.sort((a,b) => (a.no||9999) - (b.no||9999));
+    renderStaff();
+  } catch (e) {
+    $('staffActive').innerHTML = '';
+    say('err','名簿を読み込めませんでした。\n通信を確認して、もう一度お試しください。\n\n（' + (e.code||e.message) + '）');
+  }
+}
+
+function rowHtml(p){
+  const dim  = p.status === 'left' ? ' dim' : '';
+  const tag  = p.status === 'left' ? '<span class="tag left">退職</span>'
+             : p.employment === 'monthly' ? '<span class="tag emp">社員</span>'
+             : p.employment === 'owner'   ? '<span class="tag own">経営</span>' : '';
+  return '<button class="row' + dim + '" data-code="' + esc(p.code) + '">'
+       +   '<span class="num">' + esc(p.code) + '</span>'
+       +   '<span class="nm">' + esc(p.displayName || '(名前なし)') + '</span>'
+       +   tag
+       +   '<span class="arw">›</span>'
+       + '</button>';
+}
+
+let leftOpen = false;
+function renderStaff(){
+  const act  = ROSTER.filter(p => p.status !== 'left');
+  const left = ROSTER.filter(p => p.status === 'left');
+  $('staffActive').innerHTML = act.length ? act.map(rowHtml).join('')
+                                          : '<p class="lead">まだ誰も登録されていません。</p>';
+  $('staffLeft').innerHTML = left.map(rowHtml).join('');
+  $('foldLeft').textContent = left.length
+    ? (leftOpen ? '▾ 退職した人（' + left.length + '名）を隠す'
+                : '▸ 退職した人（' + left.length + '名）を表示')
+    : '';
+  $('foldLeft').classList.toggle('hide', left.length === 0);
+  $('staffLeft').classList.toggle('hide', !leftOpen);
+  document.querySelectorAll('#staffView .row').forEach(b => {
+    b.onclick = () => openEdit(b.dataset.code);
+  });
+}
+
+/* ---------- 編集シート ---------- */
+function sheet(html){
+  const bg = document.createElement('div');
+  bg.className = 'sheet-bg';
+  bg.innerHTML = '<div class="sheet">' + html + '</div>';
+  bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+  return bg;
+}
+function chipRow(name, map, cur, warnKeys){
+  return '<div class="chips">' + Object.keys(map).map(k =>
+    '<button class="chip' + (k === cur ? ' on' : '')
+    + ((warnKeys||[]).indexOf(k) >= 0 ? ' warn' : '')
+    + '" data-g="' + name + '" data-v="' + k + '">' + map[k] + '</button>').join('') + '</div>';
+}
+function wireChips(bg){
+  bg.querySelectorAll('.chip').forEach(c => {
+    c.onclick = () => {
+      bg.querySelectorAll('.chip[data-g="' + c.dataset.g + '"]').forEach(x => x.classList.remove('on'));
+      c.classList.add('on');
+    };
+  });
+}
+const pick = (bg, g) => (bg.querySelector('.chip[data-g="' + g + '"].on') || {}).dataset?.v;
+
+function openEdit(code){
+  const p = ROSTER.find(x => x.code === code);
+  if (!p) return;
+  editing = p;
+  const bg = sheet(
+      '<h3>' + esc(p.displayName || '') + '</h3>'
+    + '<p class="who">' + esc(p.code) + '　※番号は変わりません</p>'
+    + '<label>呼び名</label>'
+    + '<input id="eName" value="' + esc(p.displayName || '') + '" maxlength="20">'
+    + '<label>表示順</label>'
+    + '<input id="eNo" inputmode="numeric" value="' + esc(p.no || '') + '">'
+    + '<label>在籍の状態</label>' + chipRow('st', ST, p.status || 'active', ['left'])
+    + '<label>区分</label>'      + chipRow('emp', EMP, p.employment || 'hourly')
+    + '<div class="note">「経営」はオーナー・店長など、給与計算の対象外の方に使います。</div>'
+    + '<div class="acts">'
+    +   '<button class="btn sub" id="eCancel">閉じる</button>'
+    +   '<button class="btn" id="eSave">保存する</button>'
+    + '</div>');
+  wireChips(bg);
+  bg.querySelector('#eCancel').onclick = () => bg.remove();
+  bg.querySelector('#eSave').onclick = () => saveEdit(bg);
+}
+
+async function saveEdit(bg){
+  const name = (bg.querySelector('#eName').value || '').trim();
+  const no   = parseInt(toHalf(bg.querySelector('#eNo').value), 10);
+  const st   = pick(bg, 'st'), emp = pick(bg, 'emp');
+  if (!name) { say('warn','呼び名を入力してください。'); return; }
+  const btn = bg.querySelector('#eSave'); btn.disabled = true; btn.textContent = '保存中…';
+
+  const was = editing.status;
+  const upd = { displayName:name, no:(isNaN(no) ? editing.no : no), order:(isNaN(no) ? editing.order : no),
+                status:st, employment:emp };
+  try {
+    await writeStaff(editing.code, upd);
+    if (st === 'left' && was !== 'left') await lockOut(editing.code);
+    bg.remove();
+    say('ok', name + ' さんの登録を更新しました。'
+        + (st === 'left' && was !== 'left' ? '\nこの方はアプリに入れなくなりました。' : ''));
+    await openStaff();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '保存する';
+    say('err','保存できませんでした。\n通信を確認して、もう一度お試しください。\n\n（' + (e.code||e.message) + '）');
+  }
+}
+
+/* ★本体と一覧のコピーを、必ず1回の書き込みでまとめて更新する */
+async function writeStaff(code, upd){
+  const next = ROSTER.map(p => p.code === code ? Object.assign({}, p, upd) : p);
+  next.sort((a,b) => (a.no||9999) - (b.no||9999));
+  const batch = db.batch();
+  batch.set(storeRef().collection('staff').doc(code), upd, {merge:true});
+  batch.set(storeRef().collection('views').doc('staffList'), {
+    items: next.map(p => ({ code:p.code, displayName:p.displayName, no:p.no||0,
+                            status:p.status||'active', employment:p.employment||'hourly' })),
+    version: firebase.firestore.FieldValue.increment(1),
+    updatedAt: new Date().toISOString()
+  }, {merge:true});
+  await batch.commit();
+}
+
+/* 退職にしたら、その人のログインをその場で止める */
+async function lockOut(code){
+  const q = await storeRef().collection('members').where('staffCode','==',code).get();
+  if (q.empty) return;                 // まだアカウントが無い人は何もしなくてよい
+  const batch = db.batch();
+  q.docs.forEach(d => batch.set(d.ref, {disabled:true}, {merge:true}));
+  await batch.commit();
+}
+
+/* ---------- 追加 ---------- */
+function openAdd(){
+  const used = ROSTER.map(p => parseInt(String(p.code).replace(/\D/g,''),10)).filter(n => !isNaN(n));
+  const next = (used.length ? Math.max.apply(null, used) : 0) + 1;
+  const bg = sheet(
+      '<h3>新しい人を追加</h3>'
+    + '<p class="who">番号は一度決めたら変えられません</p>'
+    + '<label>番号（3けた）</label>'
+    + '<input id="aNo" inputmode="numeric" maxlength="4" value="' + String(next).padStart(3,'0') + '">'
+    + '<label>呼び名</label><input id="aName" maxlength="20" placeholder="例）山本">'
+    + '<label>区分</label>' + chipRow('emp', EMP, 'hourly')
+    + '<div class="acts">'
+    +   '<button class="btn sub" id="aCancel">閉じる</button>'
+    +   '<button class="btn" id="aSave">追加する</button>'
+    + '</div>');
+  wireChips(bg);
+  bg.querySelector('#aCancel').onclick = () => bg.remove();
+  bg.querySelector('#aSave').onclick = async () => {
+    const code = normCode(bg.querySelector('#aNo').value);
+    const name = (bg.querySelector('#aName').value || '').trim();
+    if (!code) { say('warn','番号は3けたの数字です。'); return; }
+    if (!name) { say('warn','呼び名を入力してください。'); return; }
+    if (ROSTER.some(p => p.code === code)) {
+      say('err','その番号は ' + esc(ROSTER.find(p => p.code===code).displayName) + ' さんが使っています。\n番号は使い回さない決まりです。別の番号にしてください。');
+      return;
+    }
+    const btn = bg.querySelector('#aSave'); btn.disabled = true; btn.textContent = '追加中…';
+    const no = parseInt(code.replace(/\D/g,''),10);
+    const rec = { code, displayName:name, no, order:no, status:'active',
+                  employment:pick(bg,'emp'), skillLevels:{},
+                  tenantId:getStore(), storeId:getStore() };
+    try {
+      ROSTER.push(rec);
+      await writeStaff(code, rec);
+      bg.remove();
+      say('ok', name + ' さんを追加しました。');
+      await openStaff();
+    } catch (e) {
+      ROSTER = ROSTER.filter(p => p.code !== code);
+      btn.disabled = false; btn.textContent = '追加する';
+      say('err','追加できませんでした。\n\n（' + (e.code||e.message) + '）');
+    }
+  };
+}
+
+$('toStaff').onclick  = openStaff;
+$('addStaff').onclick = openAdd;
+$('backHome').onclick = () => {
+  $('staffView').classList.add('hide'); $('homeView').classList.remove('hide'); clearSay();
+};
+$('foldLeft').onclick = () => { leftOpen = !leftOpen; renderStaff(); };
+
 $('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') staffLogin(); });
 
 if (ready) {
